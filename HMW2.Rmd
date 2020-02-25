@@ -1,0 +1,583 @@
+---
+title: "ISYE 6402 - Time Series Analysis"
+author: "Ihab selmi"
+date: "Homework 2"
+output: word_document
+---
+
+**Question 1: Forecasting Music Charts**
+
+**Data Preparation:**
+
+```{r }
+#Load chart_monthly.csv
+
+library(TSA)
+library(mgcv)
+
+fname <- "~/Desktop/Georgia Tech Classes/ISYE 6402 - Time Series Analysis/Hmw 2/Data/chart_monthly.csv"
+
+original_chart <- read.csv(fname)
+
+
+data <- original_chart[,2]
+
+chart = ts(data,start=c(1965,1),freq=12)
+
+chart.dif = diff(chart)
+```
+
+**Question 1a: Exploratory Data Analysis:**
+
+*(i) Plot the Time Series and ACF plots.*
+
+```{r, echo=FALSE}
+par(mfrow = c(1,2))
+ts.plot(chart,ylab="Original Data", main = "Original Time Series Plot")
+acf(chart,main = "Original Time Series")
+```
+
+*Comment on the main features, and identify what (if any) assumptions of stationarity are violated.*
+
+There appears to be a non-constant mean but no clear consistent trend. Variance is not consistent with some large spikes during the end of 1990s and before 2000 that shows heteroscedasticity. ACF never cuts off which means that time series is not stationary.
+
+*(ii) Perform a differencing on the data, and perform the same analysis.*
+
+```{r, echo=FALSE}
+par(mfrow = c(1,2))
+ts.plot(chart.dif,ylab="Differenced Time Series", main = "Differenced Time Series Plot")
+acf(chart.dif,main="Differenced Time Series")
+```
+
+*How do assumptions of stationarity hold for the differenced data?*
+
+Mean appears constant, and with the exception of the large spike in the late 1990s, variance appears constant too. ACF plots resemble white noise, with no clear autocorrelation or seasonality present. 
+
+*Do you expect the differencing data be suitable for ARMA forecasting?*
+
+Differenced data appears weakly stationary and would be most appropriate for use in time series analysis using ARMA forecasting.
+
+**Question 1b: ARIMA Modelling:**
+
+*Using graphical analysis of ACF and PACF plots for the original data and the differenced data as well:*
+
+-*Original Series:*
+
+```{r, echo=FALSE}
+par(mfrow = c(1,2))
+acf(chart,main = "Original Time Series")
+pacf(chart,main = "Original Time Series")
+```
+
+Based on the ACF and PACF, the original data is not stationary as the ACF never cuts off. Therefore we need to difference the time series at least once. 
+
+-*1st Differencing:*
+
+```{r, echo=FALSE}
+par(mfrow = c(1,2))
+acf(chart.dif,main="Differenced Time Series")
+pacf(chart.dif,main="Differenced Time Series")
+```
+
+Based on the ACF of the first differenced time series, the time series look stationary and the ACF cuts off at lag 1, while PACF cuts off at lag 6. Therefore an AR model of order 6 and MA model of order 1 are needed based on the ACF and PACF plots.
+
+*Fit the an ARIMA(p,d,q) model with max order = 3, max differencing = 1.*
+
+```{r }
+test_modelA <- function(p,d,q){
+  mod = arima(chart, order=c(p,d,q), method="ML")
+  current.aic = AIC(mod)
+  df = data.frame(p,d,q,current.aic)
+  names(df) <- c("p","d","q","AIC")
+  print(paste(p,d,q,current.aic,sep=" "))
+  return(df)
+}
+
+orders = data.frame(Inf,Inf,Inf,Inf)
+names(orders) <- c("p","d","q","AIC")
+
+
+for (p in 0:3){
+  for (d in 0:1){
+    for (q in 0:3) {
+      possibleError <- tryCatch(
+        orders<-rbind(orders,test_modelA(p,d,q)),
+        error=function(e) e
+      )
+      if(inherits(possibleError, "error")) next
+      
+    }
+  }
+}
+orders <- orders[order(-orders$AIC),]
+orders
+```
+
+*Using an AIC significance threshold of 2, choose which order to use and explain your reasoning for choosing it.*
+
+The lowest AIC is equal to 3612.688 and it corresponds to ARIMA(3,1,3). However, the absolute value of the roots related to the AR part are outside the unit circle (so the inverse roots that are plotted are just inside the circle). Consequently, this model is rejected because the forecasts will be numerically unstable. 
+However the ARIMA(0,1,2) displays the next lowest AIC equal to 3646.283. Besides that the coefficients are statistically 
+significant. Therefore, we will use that model to continue our analysis.
+
+*Evaluate the model residuals with relevant plots and tests.*
+
+```{r }
+final_model = arima(chart, order = c(0,1,2), method = "ML")
+print(final_model)
+```
+
+The confidence intervals are calculated as:
+
+```{r }
+-1.1152 + c(-1.96, 1.96)*0.0387
+0.1969 + c(-1.96, 1.96)*0.0382
+```
+
+Both parameter estimates fall within the confidence intervals and are close to the true parameter values of the simulated ARIMA series. Hence, we shouldn't be surprised to see the residuals looking like a realisation of discrete white noise:
+
+Let’s plot the residuals to ensure there are no patterns (that is, look for constant mean and variance).
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+plot(resid(final_model), ylab='Residuals',type='o',main="Residual Plot")
+abline(h=0)
+acf(resid(final_model),main="ACF: Residuals")
+hist(resid(final_model),xlab='Residuals',main='Histogram: Residuals')
+qqnorm(resid(final_model),ylab="Sample Q",xlab="Theoretical Q")
+qqline(resid(final_model))
+```
+
+The residual plot errors seem fine with near zero mean and uniform variance unless for end of 1990s displaying a pick of variance. Regarding the ACF resduals plot, all the lags are close to 0 except for couple ones that are siginficant. However, we can ignore them and consider that ACF plot shows that residals are stationary. Regarding the histogram, the residuals look normally distributed with positive skew. Regarding the Q-Q plot, the residuals look normally distributed with positive skew. Therefore, the residual plot does not show to have a pattern. The variance of the residuals is also constant. 
+
+```{r }
+Box.test(resid(final_model), lag = (0+2+1), type = "Box-Pierce", fitdf = (0+2))
+Box.test(resid(final_model), lag = (0+2+1), type = "Ljung-Box", fitdf = (0+2))
+```
+
+We can see that p-value is significantly larger than 0.05 and as such we can state that there is strong evidence for discrete white noise being a good fit to the residuals. Hence, the ARIMA(0,1,2) model is a good fit, as expected.
+
+**Question 1c: Forecasting**
+
+*Build an ARIMA(2,1,4) model:*
+
+```{r }
+final_model_ARIMA = arima(chart, order = c(2,1,4), method = "ML")
+print(final_model_ARIMA)
+```
+
+*Display model coefficients, comment on anything that stands out about them, and write out the model formula in full form.*
+
+```{r }
+print(final_model_ARIMA$coef)
+```
+
+The absolute value of the roots related to the AR part are outside the unit circle, so the inverse roots are inside the circle. Consequently, the forecasts will be numerically unstable. 
+
+*Generate forecasts of those 6 months and compare the predicted values to the actual ones. Include 95% confidence interval for the forecasts and provide plots.*
+
+```{r, echo=FALSE}
+n = length(chart)
+nfit = n-6
+outprice = arima(chart[1:nfit], order = c(2,1,4),method = "ML")
+outpred = predict(outprice,n.ahead=6)
+ubound = outpred$pred+1.96*outpred$se
+lbound = outpred$pred-1.96*outpred$se
+ymin = min(lbound)
+ymax = max(ubound)
+
+par(mfrow = c(1,1))
+plot(chart[(n-50):n],type="l", ylim=c(ymin,ymax), xlab="Time", ylab="Count")
+points((47:52),  outpred$pred[1:6],col="red")
+lines((47:52), ubound,lty=3,lwd= 2, col="blue")
+lines((47:52), lbound,lty=3,lwd= 2, col="blue")
+```
+
+*Calculate Mean Absolute Prediction Error (MAE), Mean Absolute Percentage Error (MAPE), and Precision Measure (PM); comment on the accuracy of predictions.*
+
+*Compute Accuracy Measures:*
+
+```{r }
+obsprice = chart[(n-5):n]
+predprice = outpred$pred
+```
+
+*Mean Absolute Prediction Error (MAE):*
+
+```{r }
+mean(abs(predprice-obsprice))
+```
+
+MAE is equal to 6.164941 which is lower than 10.0, therefore the model is a good forecast for the time series.
+
+*Mean Absolute Percentage Error (MAPE)*
+
+```{r }
+mean(abs(predprice-obsprice)/obsprice)
+```
+
+MAPE is equal to 49.25% implies the model is about 50.75% accurate in predicting the next 6 observations, therefore the model is not a good forecast for the time series based on the MAPE.
+
+*Precision Measure (PM)*
+
+```{r }
+sum((predprice-obsprice)^2)/sum((obsprice-mean(obsprice))^2)
+```
+
+The precision measure is 1.21, which means that the proportion between the variability in the prediction and the variability in the new data is 1.21. That is, the variability in the prediction is close to the variability in the data. The closer this is to zero, the better the prediction is. Therefore, the prediction measure is indicating good performance in predicting the 6 months.
+
+**Question 2:**
+
+**Data Preparation:**
+
+```{r }
+#Libraries and Data
+
+library(TSA)
+
+library(mgcv)
+
+#USD to EU
+
+fname <- "~/Desktop/Georgia Tech Classes/ISYE 6402 - Time Series Analysis/Hmw 2/Data/USD to EU.csv"
+
+data1 <- read.csv(fname)
+
+data1 <- data1[,2]
+
+EU = ts(data1,start=c(2014),freq=52)
+
+#USD to GBP
+
+fname <- "~/Desktop/Georgia Tech Classes/ISYE 6402 - Time Series Analysis/Hmw 2/Data/USD to GBP.csv"
+
+data2 <- read.csv(fname)
+
+data2 <- data2[,2]
+
+GBP = ts(data2,start=c(2014),freq=52)
+```
+
+**Question 2a: ARIMA Fitting:**
+
+*For both time series, use the iterative model to fit an ARIMA(p,d,q) model with max order = 3, max differencing = 2. Evaluate the models for ACF and PACF plots as well as relevant tests.*
+
+We will divide this part in two. First, USD to EUR and then USD to GBP.
+
+**1 - Currency Conversion Rates USD to EUR**
+
+```{r }
+test_model_USD_EUR <- function(p,d,q){
+  mod = arima(EU, order=c(p,d,q), method="ML")
+  current.aic = AIC(mod)
+  df = data.frame(p,d,q,current.aic)
+  names(df) <- c("p","d","q","AIC")
+  print(paste(p,d,q,current.aic,sep=" "))
+  return(df)
+}
+
+orders = data.frame(Inf,Inf,Inf,Inf)
+names(orders) <- c("p","d","q","AIC")
+
+
+for (p in 0:3){
+  for (d in 0:2){
+    for (q in 0:3) {
+      possibleError <- tryCatch(
+        orders<-rbind(orders,test_model_USD_EUR(p,d,q)),
+        error=function(e) e
+      )
+      if(inherits(possibleError, "error")) next
+      
+    }
+  }
+}
+orders <- orders[order(-orders$AIC),]
+orders
+```
+
+We retain ARIMA(2,1,2) as it is the lowest AIC. We fit the model for the selected orders called here, the final model.
+
+```{r }
+final_model_USD_EUR = arima(EU, order = c(2,1,2), method = "ML")
+print(final_model_USD_EUR)
+```
+
+The confidence intervals are calculated as:
+
+```{r }
+-0.4504 + c(-1.96, 1.96)*0.0798 
+-0.8491 + c(-1.96, 1.96)*0.0582
+0.5958 + c(-1.96, 1.96)*0.0614
+0.9286 + c(-1.96, 1.96)*0.0573
+```
+
+The parameter estimates fall within the confidence intervals and are close to the true parameter values of the simulated ARIMA series. Hence, we shouldn't be surprised to see the residuals looking like a realisation of discrete white noise:
+
+Here are the residual plots for the fitted ARIMA(2,1,2) Model:
+
+```{r, echo=FALSE}
+porder = 2
+qorder = 2
+par(mfrow=c(1,1))
+plot(resid(final_model_USD_EUR), ylab='Residuals',type='o',main="Residual Plot")
+abline(h=0)
+par(mfrow=c(2,2))
+acf(resid(final_model_USD_EUR),main="ACF: Residuals")
+pacf(resid(final_model_USD_EUR),main="PACF: Residuals")
+hist(resid(final_model_USD_EUR),xlab='Residuals',main='Histogram: Residuals')
+qqnorm(resid(final_model_USD_EUR),ylab="Sample Q",xlab="Theoretical Q")
+qqline(resid(final_model_USD_EUR))
+```
+
+All values for the ACF are small and fall within the confidence band of the sample ACF. The same for the sample PACF, the values are all within the confidence band. The Q-Q normal plot shows both a left and a right tilt an indication that the residuals may have more of a T distribution than a normal distribution, although otherwise quite symmetric.
+
+Last, we also apply the hypothesis testing procedures for independence or serial correlation using the Box-Pierce and Ljung-Box test. 
+
+```{r }
+Box.test(resid(final_model_USD_EUR), lag = (porder+qorder+1), type = "Box-Pierce", fitdf = (porder+qorder))
+Box.test(resid(final_model_USD_EUR), lag = (porder+qorder+1), type = "Ljung-Box", fitdf = (porder+qorder))
+```
+
+We notice that p-value is significantly larger than 0.05 and as such we can state that there is strong evidence for discrete white noise being a good fit to the residuals. Hence, the ARIMA(2,1,2) model is a good fit, as expected.
+
+**2 - Currency Conversion Rates USD to GBP**
+
+```{r }
+test_model_USD_GBP <- function(p,d,q){
+  mod = arima(GBP, order=c(p,d,q), method="ML")
+  current.aic = AIC(mod)
+  df = data.frame(p,d,q,current.aic)
+  names(df) <- c("p","d","q","AIC")
+  print(paste(p,d,q,current.aic,sep=" "))
+  return(df)
+}
+
+orders = data.frame(Inf,Inf,Inf,Inf)
+names(orders) <- c("p","d","q","AIC")
+
+
+for (p in 0:3){
+  for (d in 0:2){
+    for (q in 0:3) {
+      possibleError <- tryCatch(
+        orders<-rbind(orders,test_model_USD_GBP(p,d,q)),
+        error=function(e) e
+      )
+      if(inherits(possibleError, "error")) next
+      
+    }
+  }
+}
+orders <- orders[order(-orders$AIC),]
+orders
+```
+
+The lowest AIC correspond to ARIMA(2,1,0).
+We fit the model for the selected orders:
+
+```{r }
+final_model_USD_GBP = arima(GBP, order = c(2,1,0), method = "ML")
+print(final_model_USD_GBP)
+```
+
+The confidence intervals are calculated as:
+
+```{r }
+0.2199 + c(-1.96, 1.96)*0.0585
+-0.1340 + c(-1.96, 1.96)*0.0584
+```
+
+The parameter estimates fall within the confidence intervals and are close to the true parameter values of the simulated ARIMA series. Hence, we shouldn't be surprised to see the residuals looking like a realisation of discrete white noise:
+
+Here are the residual plots for the fitted ARIMA(2,1,0) Model:
+
+```{r, echo=FALSE}
+porder = 2
+qorder = 0
+par(mfrow=c(1,1))
+plot(resid(final_model_USD_GBP), ylab='Residuals',type='o',main="Residual Plot")
+abline(h=0)
+par(mfrow=c(2,2))
+
+acf(resid(final_model_USD_GBP),main="ACF: Residuals")
+pacf(resid(final_model_USD_GBP),main="PACF: Residuals")
+hist(resid(final_model_USD_GBP),xlab='Residuals',main='Histogram: Residuals')
+qqnorm(resid(final_model_USD_GBP),ylab="Sample Q",xlab="Theoretical Q")
+qqline(resid(final_model_USD_GBP))
+```
+
+All other values for the ACF are small and fall within the confidence band of the sample ACF. The same for the sample PACF, the values are all within the confidence band. The Q-Q normal plot shows both a left tilt, an indication that the residuals may have more of a T distribution than a normal distribution, although otherwise quite symmetric.
+
+Last, we also apply the hypothesis testing procedures for independence or serial correlation using the Box-Pierce and Ljung-Box test. 
+
+```{r }
+Box.test(resid(final_model_USD_GBP), lag = (porder+qorder+1), type = "Box-Pierce", fitdf = (porder+qorder))
+Box.test(resid(final_model_USD_GBP), lag = (porder+qorder+1), type = "Ljung-Box", fitdf = (porder+qorder))
+```
+
+We can see that the p-value is significantly larger than 0.05 and as such we can state that there is strong evidence for discrete white noise being a good fit to the residuals. Hence, the ARIMA(0,1,1) model is a good fit, as expected. 
+
+**Question 2b: Forecasting**
+
+*Show coefficients for both models and compare significance of coefficients.*
+
+We will divide this part in two. First, USD to EUR and then USD to GBP.
+
+**1 - Coefficients for USD - EUR**
+
+```{r }
+final_model_USD_EUR$coef
+```
+
+The confidence intervals are calculated as:
+
+```{r }
+-0.4504 + c(-1.96, 1.96)*0.0798 
+-0.8491 + c(-1.96, 1.96)*0.0582
+0.5958 + c(-1.96, 1.96)*0.0614
+0.9286 + c(-1.96, 1.96)*0.0573
+```
+
+P-value caluclation:
+
+```{r }
+(1-pnorm(abs(final_model_USD_EUR$coef)/sqrt(diag(final_model_USD_EUR$var.coef))))*2
+```
+
+**2 - Coefficients for USD - GBP**
+
+```{r }
+final_model_USD_GBP$coef
+```
+
+The confidence intervals are calculated as:
+
+```{r }
+0.2199 + c(-1.96, 1.96)*0.0585
+-0.1340 + c(-1.96, 1.96)*0.0584
+```
+
+P-value caluclation:
+
+```{r }
+(1-pnorm(abs(final_model_USD_GBP$coef)/sqrt(diag(final_model_USD_GBP$var.coef))))*2
+```
+
+The parameter estimates fall within the confidence intervals and are close to the true parameter values of the simulated ARIMA series. The p-values are all smaller than 0.05, therefore the coefficents are all significant. Hence, we shouldn't be surprised to see the residuals looking like a realisation of discrete white noise as seen above.
+
+**1 - USD - EUR forecast and model comparison**
+
+*Generate forecasts of those 12 weeks and compare the predicted values to the actual ones. Include 95% confidence interval for the forecasts and provide plots.*
+
+```{r, echo=FALSE}
+n = length(EU)
+nfit = n-12
+outprice = arima(EU[1:nfit], order = c(2,1,2),method = "ML")
+outpred = predict(outprice,n.ahead=12)
+ubound = outpred$pred+1.96*outpred$se
+lbound = outpred$pred-1.96*outpred$se
+ymin = min(lbound)
+ymax = max(ubound)
+
+par(mfrow = c(1,1))
+plot(EU[(n-50):n],type="l", ylim=c(ymin,ymax), xlab="Time", ylab="Count")
+points((41:52),  outpred$pred[1:12],col="red")
+lines((41:52), ubound,lty=3,lwd= 2, col="blue")
+lines((41:52), lbound,lty=3,lwd= 2, col="blue")
+```
+
+*Calculate Mean Absolute Percentage Error (MAPE) and Precision Measure (PM) for each; compare the models.*
+
+*-Compute Accuracy Measures:*
+
+```{r }
+obsprice = EU[(n-11):n]
+predprice = outpred$pred
+```
+
+*-Mean Absolute Percentage Error (MAPE):*
+
+```{r }
+mean(abs(predprice-obsprice)/obsprice)
+```
+
+MAPE is equal to 0.63% implies the model is about 99.37% accurate in predicting the next 12 observations, therefore the model is not a good forecast for the time series based on the MAPE.
+
+*-Precision Measure (PM):*
+
+```{r }
+sum((predprice-obsprice)^2)/sum((obsprice-mean(obsprice))^2)
+```
+
+The precision measure is circa 1.61, which means that the proportion between the variability in the prediction and the variability in the new data is close to 0. The closer this is to zero, the better the prediction is. Therefore, the prediction measure is indicating good performance in predicting the 12 weeks
+
+**2 - USD - GBP forecast and model comparison**
+
+*Generate forecasts of those 12 weeks and compare the predicted values to the actual ones. Include 95% confidence interval for the forecasts and provide plots.* 
+
+```{r, echo=FALSE}
+n = length(GBP)
+nfit = n-12
+outprice = arima(GBP[1:nfit], order = c(2,1,0),method = "ML")
+outpred = predict(outprice,n.ahead=12)
+ubound = outpred$pred+1.96*outpred$se
+lbound = outpred$pred-1.96*outpred$se
+ymin = min(lbound)
+ymax = max(ubound)
+
+par(mfrow = c(1,1))
+plot(GBP[(n-50):n],type="l", ylim=c(ymin,ymax), xlab="Time", ylab="Count")
+points((41:52),  outpred$pred[1:12],col="red")
+lines((41:52), ubound,lty=3,lwd= 2, col="blue")
+lines((41:52), lbound,lty=3,lwd= 2, col="blue")
+```
+
+*Calculate Mean Absolute Percentage Error (MAPE) and Precision Measure (PM) for each; compare the models.*
+
+*-Compute Accuracy Measures:*
+
+```{r }
+obsprice = GBP[(n-11):n]
+predprice = outpred$pred
+```
+
+*-Mean Absolute Percentage Error (MAPE):*
+
+```{r }
+mean(abs(predprice-obsprice)/obsprice)
+```
+
+MAPE is equal to 1.99% implies the model is about 98.01% accurate in predicting the next 12 observations, therefore the model is not a good forecast for the time series based on the MAPE.
+
+*-Precision Measure (PM):*
+
+```{r }
+sum((predprice-obsprice)^2)/sum((obsprice-mean(obsprice))^2)
+```
+
+The precision measure is circa 3.13, which means that the proportion between the variability in the prediction and the variability in the new data is close to 3.13. That is, the variability in the prediction is not close to the variability in the data. The closer this is to zero, the better the prediction is. Therefore, the prediction measure is indicating good performance in predicting the 12 weeks.
+
+**Question 3: Reflection on ARIMA:**
+
+*Considering your understanding of the model as well as what you experiences completing the above questions, how would you personally regard the effectiveness of ARIMA modelling? Where would it be appropriate to use for forecasting and where would you recommend against? What are some specific points of caution one would need to consider when considering using it?*
+
+ARIMA models are used because they can reduce a non-stationary series to a stationary series using a sequence of differencing steps. The model consists of two parts.The first, the AutoRegressive part, models the relationship between a time series and its past or lagged observations. The second is the so-called Moving Average part. Using the MA model, we can model the time series, the time t is not only affected by the shock of time t, but also the shocks that have taken place before time t. The moving average is a linear combination of white noise.
+
+Besides that, ARIMA model is easy to implement and interpret.
+
+It is appropriate to use ARIMA model for forecasting when time series display trend and variability white noise. I would recommend not using it  when times series display volatility clustering as financial markets data.
+
+It is appropriate for short term forecasting, however it performs poorly at long-term forecasting because they depend on previous values as sometimes the past of the the time-series is not enough to predict the future. 
+
+Another problem is that ARIMA model captures only linear relationship, therefore the forecast is influenced by factor that goes up or down linearly forever. In real life, the factors are in different levels, therefore, we need to add model components that incorporate seasonal effects. Hence, the complex simulation models may suffer from having too many parameters to fit well.
+
+Another downside of the ARIMA, it is a univariate model (working with one variable only) and hence cannot exploit the leading indicators or explanatory variables. If these variables are important, then a multivariate model such as dynamic regression is the better choice.
+
+Another cons, the symmetric joint distribution of the stationary 	guassian ARIMA models does not fit data with strong asymmetry.
+
+Some specific points of caution one would need to consider when we use ARIMA model, we need to deal with outliers and multiple periodicities.
+
+Besides that, it may happen that your series is slightly under differenced, that differencing it one more time makes it slightly over-differenced. If your series is slightly under differenced, adding one or more additional AR terms usually makes it up. Likewise, if it is slightly over-differenced, try adding an additional MA term.
+
+
+
